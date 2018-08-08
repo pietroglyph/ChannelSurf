@@ -36,7 +36,8 @@ namespace ChannelSurfCli.Utils
                             channelId = "";
                         }
 
-                        if ((bool)obj.SelectToken("is_archived"))
+                        JToken isArchived = obj.SelectToken("is_archived");
+                        if (isArchived != null && (bool)isArchived) // Assume it's not archived if isArchived is null
                         {
                             Console.WriteLine("Skipping archived slack channel: {0}", obj["name"].ToString());
                             continue;

@@ -4,6 +4,7 @@ using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Net.Http;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -12,20 +13,20 @@ namespace ChannelSurfCli.Utils
 {
     public class Messages
     {
-        public static void ScanMessagesByChannel(List<Models.Combined.ChannelsMapping> channelsMapping, string basePath,
-            List<ViewModels.SimpleUser> slackUserList, String aadAccessToken, String selectedTeamId, bool copyFileAttachments)
+        public static void UploadMessagesByChannel(List<Models.Combined.ChannelsMapping> channelsMapping, string basePath,
+            List<ViewModels.SimpleUser> slackUserList, String aadAccessToken, String selectedTeamId, bool copyFileAttachments, bool uploadHTMLAndJSONFiles)
         {
             foreach (var v in channelsMapping)
             {
-                var channelAttachmentsToUpload = GetAndUploadMessages(v, basePath, slackUserList, aadAccessToken, selectedTeamId, copyFileAttachments);
+                GetAndUploadMessages(v, basePath, slackUserList, aadAccessToken, selectedTeamId, copyFileAttachments, uploadHTMLAndJSONFiles);
             }
 
             return;
         }
 
 
-        static List<Models.Combined.AttachmentsMapping> GetAndUploadMessages(Models.Combined.ChannelsMapping channelsMapping, string basePath,
-            List<ViewModels.SimpleUser> slackUserList, String aadAccessToken, String selectedTeamId, bool copyFileAttachments)
+        static void GetAndUploadMessages(Models.Combined.ChannelsMapping channelsMapping, string basePath,
+            List<ViewModels.SimpleUser> slackUserList, String aadAccessToken, String selectedTeamId, bool copyFileAttachments, bool uploadHTMLAndJSONFiles)
         {
             var messageList = new List<ViewModels.SimpleMessage>();
             messageList.Clear();
@@ -51,12 +52,11 @@ namespace ChannelSurfCli.Utils
                             JObject obj = JObject.Load(reader);
 
                             // SelectToken returns null not an empty string if nothing is found
-                            // I'm too lazy right now for strongly typed classes
+                            // Hence all the null coalescing
 
                             // deal with message basics: when, body, who
-
-                            var messageTs = new DateTime(1970, 1, 1, 0, 0, 0).AddSeconds(Double.Parse((string)obj.SelectToken("ts")));
-                            var messageText = (string)obj.SelectToken("text");
+                            var messageTs = new DateTime(1970, 4, 9, 1, 5, 0).AddSeconds(Double.Parse((string)(obj.SelectToken("ts") ?? "")));
+                            var messageText = (string)(obj.SelectToken("text") ?? "");
                             var messageId = channelsMapping.slackChannelId + "." + messageTs;
                             messageText = DetectSlackParens(messageText, slackUserList);
                             var messageSender = Utils.Messages.FindMessageSender(obj, slackUserList);
@@ -64,8 +64,6 @@ namespace ChannelSurfCli.Utils
                             // create a list of attachments to upload
                             // deal with "attachments" that are files
                             // specifically, files hosted by Slack
-
-                            // SelectToken returns null not an empty string if nothing is found
                             var fileUrl = (string)obj.SelectToken("file.url_private");
                             var fileId = (string)obj.SelectToken("file.id");
                             var fileMode = (string)obj.SelectToken("file.mode");
@@ -165,9 +163,7 @@ namespace ChannelSurfCli.Utils
                                 attachmentsList = null;
                             }
 
-                            // do some stuff with slack message threading at some point
-
-                            messageList.Add(new ViewModels.SimpleMessage
+                            ViewModels.SimpleMessage message = new ViewModels.SimpleMessage
                             {
                                 id = messageId,
                                 text = messageText,
@@ -175,7 +171,27 @@ namespace ChannelSurfCli.Utils
                                 user = messageSender,
                                 fileAttachment = fileAttachment,
                                 attachments = attachmentsList,
-                            });
+                            };
+
+                            JObject messageJson = new JObject
+                            {
+                                {
+                                    "rootMessage", new JObject {
+                                        {
+                                            "body", new JObject
+                                            {
+                                                {"contentType", 1}, // 1 is for html content, 0 is for text
+                                                {"content", MessageToHtml(message, channelsMapping)}
+                                            }
+                                        }
+                                    }
+                                } // You need the extra brackets so you're not directly adding a JValue
+                            };
+                            var response = Helpers.httpClient.PostAsync(O365.MsGraphBetaEndpoint + "teams/" + selectedTeamId + "/channels/" + channelsMapping.id + "/chatthreads",
+                                new StringContent(JsonConvert.SerializeObject(messageJson), Encoding.UTF8, "application/json")).Result;
+                            if (!response.IsSuccessStatusCode) Console.WriteLine("Unexpected status code of " + response.StatusCode + " returned when importing messages.");
+
+                            messageList.Add(message);
                         }
 
                     }
@@ -199,10 +215,11 @@ namespace ChannelSurfCli.Utils
                     }
                 }
             }
-            Utils.Messages.CreateSlackMessageJsonArchiveFile(basePath, channelsMapping, messageList, aadAccessToken, selectedTeamId);
-            Utils.Messages.CreateSlackMessageHtmlArchiveFile(basePath, channelsMapping, messageList, aadAccessToken, selectedTeamId);
-
-            return attachmentsToUpload;
+            if (uploadHTMLAndJSONFiles)
+            {
+                Utils.Messages.CreateSlackMessageJsonArchiveFile(basePath, channelsMapping, messageList, aadAccessToken, selectedTeamId);
+                Utils.Messages.CreateSlackMessageHtmlArchiveFile(basePath, channelsMapping, messageList, aadAccessToken, selectedTeamId);
+            }
         }
 
         static void CreateSlackMessageJsonArchiveFile(String basePath, Models.Combined.ChannelsMapping channelsMapping, List<ViewModels.SimpleMessage> messageList,

@@ -47,14 +47,13 @@ namespace ChannelSurfCli
                     }
                     catch
                     {
-                        // to-do: something 
+                        // to-do: something
                     }
                 }
             };
 
             if (args.Length > 0)
             {
-
                 // retreive settings from appsettings.json instead of hard coding them here
 
                 var builder = new ConfigurationBuilder()
@@ -107,7 +106,7 @@ namespace ChannelSurfCli
 
                 authenticationResult = UserLogin();
                 var aadAccessToken = authenticationResult.AccessToken;
-                
+
                 if (String.IsNullOrEmpty(authenticationResult.AccessToken))
                 {
                     Console.WriteLine("Something went wrong.  Please try again!");
@@ -135,39 +134,45 @@ namespace ChannelSurfCli
                     slackArchiveBasePath = Utils.Files.DecompressSlackArchiveFile(args[0], slackArchiveTempPath);
                     channelsPath = Path.Combine(slackArchiveBasePath, "channels.json");
                 }
-
+                
                 Console.WriteLine("Scanning channels.json");
                 var slackChannelsToMigrate = Utils.Channels.ScanSlackChannelsJson(channelsPath);
                 Console.WriteLine("Scanning channels.json - done");
 
+                if (args.Length > 1 && args[1] == "--dry-run") {
+                    Console.WriteLine("Skipping last steps because the --dry-run flag is set. If you got to here without errors, then your files should be all in order for a real import.");
+                    Environment.Exit(0);
+                }
+
                 Console.WriteLine("Creating channels in MS Teams");
                 var msTeamsChannelsWithSlackProps = Utils.Channels.CreateChannelsInMsTeams(aadAccessToken, selectedTeamId, slackChannelsToMigrate, slackArchiveTempPath);
                 Console.WriteLine("Creating channels in MS Teams - done");
+
 
                 if (channelsOnly)
                 {
                     Environment.Exit(0);
                 }
 
-                Console.Write("Create web pages that show the message history for each re-created Slack channel? (y|n): ");
-                var copyMessagesResponse = Console.ReadLine();
-                if(copyMessagesResponse.StartsWith("y", StringComparison.CurrentCultureIgnoreCase))
+                Console.Write("Copy files attached to Slack messages to Microsoft Teams? (y|n): ");
+                var copyFileAttachmentsResponse = Console.ReadLine();
+                if(copyFileAttachmentsResponse.StartsWith("y", StringComparison.CurrentCultureIgnoreCase))
                 {
-                    Console.Write("Copy files attached to Slack messages to Microsoft Teams? (y|n): ");
-                    var copyFileAttachmentsResponse = Console.ReadLine();
-                    if(copyFileAttachmentsResponse.StartsWith("y", StringComparison.CurrentCultureIgnoreCase))
-                    {
-                        copyFileAttachments = true;
-                    }
-                    
-                    Console.WriteLine("Scanning users in Slack archive");
-                    var slackUserList = Utils.Users.ScanUsers(Path.Combine(slackArchiveBasePath, "users.json"));
-                    Console.WriteLine("Scanning users in Slack archive - done");
-
-                    Console.WriteLine("Scanning messages in Slack channels");
-                    Utils.Messages.ScanMessagesByChannel(msTeamsChannelsWithSlackProps, slackArchiveTempPath, slackUserList, aadAccessToken, selectedTeamId, copyFileAttachments);
-                    Console.WriteLine("Scanning messages in Slack channels - done");
+                    copyFileAttachments = true;
                 }
+
+                Console.Write("Create web pages that show the message history for each re-created Slack channel? (y|n): ");
+                bool shouldCreateHTMLAndJSON = false;
+                var copyMessagesResponse = Console.ReadLine();
+                if(copyMessagesResponse.StartsWith("y", StringComparison.CurrentCultureIgnoreCase)) shouldCreateHTMLAndJSON = true;
+
+                Console.WriteLine("Scanning users in Slack archive");
+                var slackUserList = Utils.Users.ScanUsers(Path.Combine(slackArchiveBasePath, "users.json"));
+                Console.WriteLine("Scanning users in Slack archive - done");
+
+                Console.WriteLine("Scanning messages in Slack channels");
+                Utils.Messages.UploadMessagesByChannel(msTeamsChannelsWithSlackProps, slackArchiveTempPath, slackUserList, aadAccessToken, selectedTeamId, copyFileAttachments, shouldCreateHTMLAndJSON);
+                Console.WriteLine("Scanning messages in Slack channels - done");
 
                 Console.WriteLine("Tasks complete.  Press any key to exit");
                 Console.ReadKey();
