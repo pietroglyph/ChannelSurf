@@ -15,6 +15,5 @@
     <PackageReference Include="Newtonsoft.Json" Version="10.0.3" />
     <EmbeddedResource Include="BulkUpsert.js" />
     <EmbeddedResource Include="appsettings.json" />
-    <PackageReference Include="System.IO.FileSystem.AccessControl" Version="4.5.0" />
   </ItemGroup>
 </Project>
